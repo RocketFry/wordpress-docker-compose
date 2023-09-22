@@ -1,0 +1,99 @@
+version: '3.7'
+
+volumes:
+  wp_db:
+    driver: local
+
+networks:
+  wp-net:
+    driver: bridge
+
+services:
+  wp:
+    image: "wordpress:${VERSION_WP:-6.3.1-fpm}" # https://hub.docker.com/_/wordpress/
+    restart: unless-stopped
+    volumes:
+      - ./docker/php/php.conf.ini:/usr/local/etc/php/conf.d/conf.ini
+      - ./wp-app:/var/www/html # Full wordpress project
+      #- ./theme-rocketfry/:/var/www/wordpress/wp-content/themes/theme-rocketfry # Theme development
+      #- ./plugin-rocketfry/:/var/www/wordpress/wp-content/plugins/plugin-rocketfry # Plugin development
+    environment:
+      WORDPRESS_DB_HOST: db
+      WORDPRESS_DB_NAME: "${DB_NAME}"
+      WORDPRESS_DB_USER: "${DB_ROOT_USER}"
+      WORDPRESS_DB_PASSWORD: "${DB_ROOT_PASSWORD}"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost"]
+      interval: 1m
+      timeout: 10s
+      retries: 3
+    depends_on:
+      - db
+    networks:
+      - wp-net
+
+  wpcli:
+    image: wordpress:cli
+    restart: unless-stopped
+    volumes:
+      - ./docker/php/php.conf.ini:/usr/local/etc/php/conf.d/conf.ini
+      - ./wp-app:/var/www/html
+    environment:
+      WORDPRESS_DB_HOST: db
+      WORDPRESS_DB_NAME: "${DB_NAME}"
+      WORDPRESS_DB_USER: "${DB_ROOT_USER}"
+      WORDPRESS_DB_PASSWORD: "${DB_ROOT_PASSWORD}"
+    depends_on:
+      - db
+      - wp
+    networks:
+      - wp-net
+
+  db:
+    image: "mysql:${VERSION_MYSQL:-5.7}" # https://hub.docker.com/_/mysql/
+    platform: linux/x86_64 # workaround for apple silicon chips
+    restart: unless-stopped
+    command: --default-authentication-plugin=mysql_native_password
+    environment:
+      MYSQL_ROOT_PASSWORD: "${DB_ROOT_PASSWORD}"
+      MYSQL_DATABASE: "${DB_NAME}"
+      MYSQL_USER: "${DB_ROOT_USER}"
+      MYSQL_PASSWORD: "${DB_ROOT_PASSWORD}"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-u", "root", "-p${DB_ROOT_PASSWORD}"]
+      interval: 1m
+      timeout: 10s
+      retries: 3
+    ports:
+      - "${DB_PORT:-7081}:3306"
+    volumes:
+      - wp_db:/var/lib/mysql
+    networks:
+      - wp-net
+
+  adminer:
+    image: "adminer:${VERSION_ADMINER:-4.8.1-standalone}" # https://hub.docker.com/_/adminer/
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "http://localhost:8080"]
+      interval: 1m
+      timeout: 10s
+      retries: 3
+    ports:
+      - '${ADMINER_PORT:-7081}:8080'
+    networks:
+      - wp-net
+
+  nginx:
+    image: "nginx:${VERSION_NGINX:-1.23-alpine}"
+    restart: unless-stopped
+    volumes:
+      - ./docker/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./wp-app:/var/www/html
+    ports:
+      - ${APP_PORT:-7080}:80
+    depends_on:
+      - wp
+      - db
+    networks:
+      - wp-net
